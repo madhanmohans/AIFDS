@@ -41,3 +41,29 @@
 .read-the-docs {
   color: #888;
 }
+
+/* Drop Success Animation */
+@keyframes dropSuccess {
+  0% {
+    background-color: rgba(76, 175, 80, 0.1);
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.4);
+  }
+  50% {
+    background-color: rgba(76, 175, 80, 0.2);
+    box-shadow: 0 0 0 4px rgba(76, 175, 80, 0.6);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0px rgba(76, 175, 80, 0);
+  }
+}
+
+.drop-success {
+  animation: dropSuccess 0.8s ease-in-out;
+}
+
+/* Prevent accidental text selection when dragging */
+[draggable] {
+  user-select: none;
+  -webkit-user-select: none;
+}

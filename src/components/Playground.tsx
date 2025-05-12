@@ -24,16 +24,23 @@ import {
   Tooltip,
   Snackbar,
   Alert,
+  Chip,
 } from '@mui/material';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CodeIcon from '@mui/icons-material/Code';
-import { CodeGenerator } from '../services/codeGenerator';
+import { generateReactComponent, generateReactApp, exportPlayground, generateComponentForTechStack } from '../services/codeGenerator';
 import JSZip from 'jszip';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
 import { usePlayground } from '../context/PlaygroundContext';
 import { availableComponents } from '../config/components';
-import type { ComponentConfig } from '../context/PlaygroundContext';
+import type { ComponentConfig, TechStack } from '../types/playground';
+
+// Import our modularized components
+import ComponentsPanel from './playground/ComponentsPanel';
+import PropertiesPanel from './playground/PropertiesPanel';
+import PlaygroundArea from './playground/PlaygroundArea';
 
 // Add TypeScript interfaces for drag and drop operations
 interface DragResult {
@@ -49,6 +56,19 @@ interface DragResult {
 }
 
 type DropPosition = 'before' | 'after' | 'inside';
+
+// Enhanced ComponentConfig interface to explicitly support recursion
+interface EnhancedComponentConfig extends ComponentConfig {
+  children?: EnhancedComponentConfig[];
+}
+
+// Helper function to safely cast to the enhanced type
+const asEnhanced = (comp: ComponentConfig): EnhancedComponentConfig => comp as EnhancedComponentConfig;
+
+// Helper function to safely get children array with proper typing
+const safeChildren = (comp: ComponentConfig): ComponentConfig[] => {
+  return comp.children || [];
+};
 
 // Add debounce utility function 
 function useDebounce<T>(value: T, delay: number): T {
@@ -77,11 +97,18 @@ const PropertyTextField = ({
   value: any; 
   onChange: (val: any) => void 
 }) => {
-  const [localValue, setLocalValue] = useState(value || prop.default);
-  const debouncedValue = useDebounce(localValue, 500);
+  const [localValue, setLocalValue] = useState(value || prop.default || '');
+  const debouncedValue = useDebounce(localValue, 300);
+  
+  // Update when prop value changes (e.g., when selected component changes)
+  useEffect(() => {
+    if (value !== localValue) {
+      setLocalValue(value || prop.default || '');
+    }
+  }, [value, prop.default]);
   
   useEffect(() => {
-    if (debouncedValue !== value) {
+    if (debouncedValue !== value && debouncedValue !== undefined) {
       onChange(debouncedValue);
     }
   }, [debouncedValue, onChange, value]);
@@ -94,6 +121,12 @@ const PropertyTextField = ({
       onChange={(e) => setLocalValue(e.target.value)}
       margin="normal"
       size="small"
+      sx={{
+        '& .MuiInputBase-input': {
+          fontWeight: prop.label.toLowerCase() === 'font weight' ? localValue : 'normal',
+          fontStyle: prop.label.toLowerCase() === 'font style' ? localValue : 'normal',
+        }
+      }}
     />
   );
 };
@@ -107,11 +140,18 @@ const PropertySelectField = ({
   value: any; 
   onChange: (val: any) => void 
 }) => {
-  const [localValue, setLocalValue] = useState(value || prop.default);
-  const debouncedValue = useDebounce(localValue, 500);
+  const [localValue, setLocalValue] = useState(value || prop.default || '');
+  const debouncedValue = useDebounce(localValue, 300);
+  
+  // Update when prop value changes (e.g., when selected component changes)
+  useEffect(() => {
+    if (value !== localValue) {
+      setLocalValue(value || prop.default || '');
+    }
+  }, [value, prop.default]);
   
   useEffect(() => {
-    if (debouncedValue !== value) {
+    if (debouncedValue !== value && debouncedValue !== undefined) {
       onChange(debouncedValue);
     }
   }, [debouncedValue, onChange, value]);
@@ -143,11 +183,18 @@ const PropertyColorField = ({
   value: any; 
   onChange: (val: any) => void 
 }) => {
-  const [localValue, setLocalValue] = useState(value || prop.default);
-  const debouncedValue = useDebounce(localValue, 500);
+  const [localValue, setLocalValue] = useState(value || prop.default || '#000000');
+  const debouncedValue = useDebounce(localValue, 300);
+  
+  // Update when prop value changes (e.g., when selected component changes)
+  useEffect(() => {
+    if (value !== localValue) {
+      setLocalValue(value || prop.default || '#000000');
+    }
+  }, [value, prop.default]);
   
   useEffect(() => {
-    if (debouncedValue !== value) {
+    if (debouncedValue !== value && debouncedValue !== undefined) {
       onChange(debouncedValue);
     }
   }, [debouncedValue, onChange, value]);
@@ -188,11 +235,18 @@ const PropertyNumberField = ({
   value: any; 
   onChange: (val: any) => void 
 }) => {
-  const [localValue, setLocalValue] = useState(Number(value) || prop.default);
-  const debouncedValue = useDebounce(localValue, 500);
+  const [localValue, setLocalValue] = useState(Number(value) || prop.default || 0);
+  const debouncedValue = useDebounce(localValue, 300);
+  
+  // Update when prop value changes (e.g., when selected component changes)
+  useEffect(() => {
+    if (value !== localValue) {
+      setLocalValue(Number(value) || prop.default || 0);
+    }
+  }, [value, prop.default]);
   
   useEffect(() => {
-    if (debouncedValue !== value) {
+    if (debouncedValue !== value && debouncedValue !== undefined) {
       onChange(debouncedValue);
     }
   }, [debouncedValue, onChange, value]);
@@ -208,7 +262,7 @@ const PropertyNumberField = ({
         min={prop.min || 0}
         max={prop.max || 100}
         step={prop.step || 1}
-        onChange={(_, newValue) => setLocalValue(newValue)}
+        onChange={(_, newValue) => setLocalValue(newValue as number)}
         valueLabelDisplay="auto"
       />
     </Box>
@@ -225,10 +279,17 @@ const PropertyBooleanField = ({
   onChange: (val: any) => void 
 }) => {
   const [localValue, setLocalValue] = useState(value === true || value === 'true');
-  const debouncedValue = useDebounce(localValue, 500);
+  const debouncedValue = useDebounce(localValue, 300);
+  
+  // Update when prop value changes (e.g., when selected component changes)
+  useEffect(() => {
+    if (value !== localValue) {
+      setLocalValue(value === true || value === 'true');
+    }
+  }, [value]);
   
   useEffect(() => {
-    if (debouncedValue !== value) {
+    if (debouncedValue !== value && debouncedValue !== undefined) {
       onChange(debouncedValue);
     }
   }, [debouncedValue, onChange, value]);
@@ -248,15 +309,48 @@ const PropertyBooleanField = ({
   );
 };
 
+// Helper function to convert hex color to RGB for animation
+const hexToRgb = (hex: string): string => {
+  // Remove # if present
+  hex = hex.replace('#', '');
+  
+  // Parse the hex values
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  
+  return `${r}, ${g}, ${b}`;
+};
+
 export default function Playground() {
   const { state, dispatch } = usePlayground();
   const { components, selectedComponent, selectedAvailableComponent, dropTarget } = state;
-  const [snackbarOpen, setSnackbarOpen] = React.useState(false);
-  const [snackbarMessage, setSnackbarMessage] = React.useState('');
+  const [codeDialogOpen, setCodeDialogOpen] = useState(false);
+  const [generatedCode, setGeneratedCode] = useState('');
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [searchText, setSearchText] = useState('');
+  
+  const debouncedSearchText = useDebounce(searchText, 300);
+  
+  // Get a color associated with the component type for visualization
+  const getComponentColor = (type: string) => {
+    switch(type) {
+      case 'Section': return '#6caba8';
+      case 'Typography': return '#e66e73';
+      case 'Button': return '#6d597a';
+      case 'Card': return '#b7bf96';
+      case 'Image': return '#e6a456';
+      case 'Flexbox': return '#7986cb';
+      case 'Stack': return '#4db6ac';
+      case 'ScrollableContainer': return '#9575cd';
+      default: return '#6caba8';
+    }
+  };
 
   useEffect(() => {
     // Log the component tree for debugging
-    console.log('Component Tree Structure:', JSON.stringify(components, null, 2));
+    // console.log('Component Tree Structure:', JSON.stringify(components, null, 2));
   }, [components]);
 
   const handleDragEnd = (result: DragResult) => {
@@ -284,11 +378,12 @@ export default function Playground() {
       }
 
       // Create a new component with unique ID
+      // IMPORTANT: All component types now support children for full recursive capability
       const newComponent: ComponentConfig = {
         id: `${componentType.id}-${Date.now()}`,
         type: componentType.type,
         props: { ...componentType.defaultProps },
-        children: componentType.type === 'Section' || componentType.type === 'Card' ? [] : undefined,
+        children: [], // All components can have children now
       };
 
       console.log('Adding new component:', newComponent);
@@ -410,11 +505,43 @@ export default function Playground() {
   };
 
   const handleComponentSelect = (component: ComponentConfig) => {
-    dispatch({ type: 'SELECT_COMPONENT', payload: component });
+    // Log the component being selected for debugging
+    console.log('Selecting component:', component);
+    
+    // Clear any previously selected component to avoid stale data
+    dispatch({ type: 'SELECT_COMPONENT', payload: null });
+    
+    // After a short delay to ensure the state is updated, set the new selection
+    setTimeout(() => {
+      // Find the most recent version of this component in case it was updated
+      const freshComponent = findComponentById(components, component.id);
+      
+      // Dispatch the action to update the selected component in state
+      dispatch({ type: 'SELECT_COMPONENT', payload: freshComponent || component });
+      
+      // Highlight the component in the DOM
+      const componentElement = document.querySelector(`[data-test-id="${component.type.toLowerCase()}-${component.id}"]`);
+      if (componentElement) {
+        componentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      
+      // Also clear any selected available component to avoid confusion
+      dispatch({ type: 'SELECT_AVAILABLE_COMPONENT', payload: null });
+    }, 50);
   };
 
   const handleDeleteComponent = (id: string) => {
-    dispatch({ type: 'DELETE_COMPONENT', payload: id });
+    // Use recursive delete function to remove the component from the nested structure
+    const updatedComponents = deleteComponentById(components, id);
+    
+    // Update the state with the filtered components
+    dispatch({ type: 'REORDER_COMPONENTS', payload: updatedComponents });
+    
+    // If the deleted component was selected, clear the selection
+    if (selectedComponent?.id === id) {
+      dispatch({ type: 'SELECT_COMPONENT', payload: null });
+    }
+    
     setSnackbarMessage('Component deleted');
     setSnackbarOpen(true);
   };
@@ -422,8 +549,36 @@ export default function Playground() {
   // Now let's replace the renderPropertyField function with one that doesn't use hooks directly
   const renderPropertyField = (key: string, prop: any, value: any, onChange: (newValue: any) => void) => {
     const handleChange = (newValue: any) => {
-      onChange(newValue);
+      console.log(`Property updated: ${key} = ${newValue}`);
+      
+      // Update the component in the global state
       if (selectedComponent) {
+        // First, update the component in the component tree
+        const updatedComponents = findAndUpdateNestedComponent(components, selectedComponent.id, (comp) => {
+          return {
+            ...comp,
+            props: {
+              ...comp.props,
+              [key]: newValue
+            }
+          };
+        });
+        
+        // Update the components array with the modified tree
+        dispatch({ 
+          type: 'REORDER_COMPONENTS', 
+          payload: updatedComponents
+        });
+        
+        // Then, update the selected component to show the changes in the properties panel
+        dispatch({
+          type: 'UPDATE_COMPONENT',
+          payload: {
+            id: selectedComponent.id,
+            props: { [key]: newValue },
+          },
+        });
+        
         setSnackbarMessage(`Updated ${prop.label.toLowerCase()} to "${newValue}"`);
         setSnackbarOpen(true);
       }
@@ -444,66 +599,328 @@ export default function Playground() {
   };
 
   const renderComponent = (component: ComponentConfig) => {
-    const commonProps = {
-      onClick: (e: React.MouseEvent) => {
-        e.stopPropagation();
-        handleComponentSelect(component);
-        console.log('Selected nested component:', component);
-      },
-      sx: {
-        position: 'relative',
-        padding: component.props?.padding || 2,
-        margin: component.props?.margin || 1,
-        backgroundColor: component.props?.backgroundColor || 'transparent',
-        borderRadius: component.props?.borderRadius ? `${component.props.borderRadius}px` : 0,
-        border: component.props?.border || 'none',
-        transition: 'all 0.2s ease',
-        '&:hover': {
-          outline: '1px dashed #6caba8',
-        },
-        ...(selectedComponent?.id === component.id && {
-          outline: '2px solid #6caba8',
-          boxShadow: '0 0 8px rgba(108, 171, 168, 0.3)'
-        })
-      },
-    };
-
     const isSelected = selectedComponent?.id === component.id;
     
-    // Get a color associated with the component type for visualization
-    const getComponentColor = (type: string) => {
-      switch(type) {
-        case 'Section': return '#6caba8';
-        case 'Typography': return '#e66e73';
-        case 'Button': return '#6d597a';
-        case 'Card': return '#b7bf96';
-        case 'Image': return '#e6a456';
-        default: return '#6caba8';
-      }
+    // Common component wrapper that applies to all components
+    const ComponentWrapper = ({ children }: { children: React.ReactNode }) => {
+      return (
+        <Box
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            handleComponentSelect(component);
+          }}
+          sx={{
+            position: 'relative',
+            padding: component.props?.padding || 2,
+            margin: component.props?.margin || 1,
+            backgroundColor: component.props?.backgroundColor || 'transparent',
+            borderRadius: component.props?.borderRadius ? `${component.props.borderRadius}px` : 0,
+            border: component.props?.border || 'none',
+            transition: 'all 0.2s ease',
+            cursor: 'pointer',
+            '&:hover': {
+              outline: '1px dashed #6caba8',
+              '& .delete-btn': {
+                opacity: 1,
+                transform: 'scale(1)'
+              },
+              '& .drag-handle': {
+                opacity: 1,
+                transform: 'scale(1)'
+              }
+            },
+            ...(isSelected && {
+              outline: '2px solid #6caba8',
+              boxShadow: '0 0 8px rgba(108, 171, 168, 0.3)'
+            }),
+            className: `cline-${component.type.toLowerCase()}`,
+            'data-test-id': `${component.type.toLowerCase()}-${component.id}`,
+            'data-selected': isSelected ? 'true' : 'false',
+          }}
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            handleDragStart(e, component.id);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleDragOver(e, component.id);
+          }}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.currentTarget.style.backgroundColor = '';
+            e.currentTarget.style.outline = '';
+            
+            try {
+              // Check if this is a new component being added
+              const newComponentData = e.dataTransfer.getData('component');
+              if (newComponentData) {
+                const componentData = JSON.parse(newComponentData);
+                const newComponent: ComponentConfig = {
+                  id: `${componentData.id}-${Date.now()}`,
+                  type: componentData.type,
+                  props: { ...componentData.defaultProps },
+                  children: [], // All components can have children
+                };
+                
+                // Add to the children of the current component
+                const updatedComponents = findAndUpdateNestedComponent(components, component.id, (comp) => {
+                  return {
+                    ...comp,
+                    children: [...safeChildren(comp), newComponent]
+                  };
+                });
+                
+                dispatch({ 
+                  type: 'REORDER_COMPONENTS', 
+                  payload: updatedComponents
+                });
+                
+                setSnackbarMessage(`Added ${componentData.type} inside ${component.type}`);
+                setSnackbarOpen(true);
+                
+                // Select the new component
+                setTimeout(() => {
+                  dispatch({ type: 'SELECT_COMPONENT', payload: newComponent });
+                }, 100);
+              }
+            } catch (err) {
+              console.error('Error handling drop inside component:', err);
+            }
+          }}
+        >
+          {/* Component type indicator */}
+          <Typography variant="caption" color="text.secondary" sx={{ 
+            position: 'absolute', 
+            top: 0, 
+            right: 0, 
+            fontSize: '10px', 
+            backgroundColor: 'rgba(255,255,255,0.8)', 
+            px: 0.5, 
+            zIndex: 2,
+            borderRadius: '0 0 0 4px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5
+          }}>
+            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: getComponentColor(component.type) }} />
+            {component.type}
+          </Typography>
+          
+          {/* Selection indicator */}
+          {isSelected && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: -4,
+                left: -4,
+                right: -4,
+                bottom: -4,
+                border: `2px solid ${getComponentColor(component.type)}`,
+                borderRadius: '4px',
+                pointerEvents: 'none',
+                zIndex: 1,
+                animation: 'pulse 2s infinite',
+                '@keyframes pulse': {
+                  '0%': { boxShadow: `0 0 0 0 rgba(${hexToRgb(getComponentColor(component.type))}, 0.7)` },
+                  '70%': { boxShadow: `0 0 0 6px rgba(${hexToRgb(getComponentColor(component.type))}, 0)` },
+                  '100%': { boxShadow: `0 0 0 0 rgba(${hexToRgb(getComponentColor(component.type))}, 0)` },
+                },
+              }}
+            />
+          )}
+          
+          {/* Delete button */}
+          <Box
+            className="delete-btn"
+            sx={{
+              position: 'absolute',
+              top: -8,
+              right: -8,
+              opacity: 0,
+              transform: 'scale(0.8)',
+              transition: 'all 0.2s ease',
+              zIndex: 10
+            }}
+          >
+            <Tooltip title={`Delete ${component.type}`}>
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteComponent(component.id);
+                }}
+                sx={{
+                  backgroundColor: '#e66e73',
+                  color: 'white',
+                  width: 18,
+                  height: 18,
+                  '& .MuiSvgIcon-root': {
+                    fontSize: 12
+                  },
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
+                  '&:hover': {
+                    backgroundColor: '#d25a5e',
+                  }
+                }}
+              >
+                <DeleteIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          
+          {/* Drag handle */}
+          <Box
+            className="drag-handle"
+            sx={{
+              position: 'absolute',
+              top: -8,
+              left: -8,
+              opacity: 0,
+              transform: 'scale(0.8)',
+              transition: 'all 0.2s ease',
+              zIndex: 10
+            }}
+          >
+            <Tooltip title={`Drag to reorder`}>
+              <IconButton
+                size="small"
+                sx={{
+                  backgroundColor: '#6caba8',
+                  color: 'white',
+                  width: 18,
+                  height: 18,
+                  '& .MuiSvgIcon-root': {
+                    fontSize: 12
+                  },
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
+                  cursor: 'grab',
+                  '&:hover': {
+                    backgroundColor: '#5a9996',
+                  }
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+                  <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+                </svg>
+              </IconButton>
+            </Tooltip>
+          </Box>
+          
+          {/* Actual component content */}
+          {children}
+          
+          {/* Drop target indicator if this component is the current drop target */}
+          {dropTarget?.id === component.id && dropTarget.position && (
+            renderDropIndicator(dropTarget.position)
+          )}
+          
+          {/* Children container - shown for all components */}
+          <Box
+            sx={{
+              marginTop: 2,
+              padding: component.type === 'Section' || component.type === 'Card' ? 0 : 1,
+              borderRadius: 1,
+              backgroundColor: component.type === 'Section' || component.type === 'Card' ? 'transparent' : 'rgba(245, 245, 245, 0.5)',
+              borderLeft: component.type === 'Section' || component.type === 'Card' ? 'none' : `2px solid ${getComponentColor(component.type)}`,
+              display: component.type === 'Button' || component.type === 'Typography' || component.type === 'Image' ? 
+                (component.children && component.children.length > 0 ? 'block' : 'none') : 'block'
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.currentTarget.style.backgroundColor = 'rgba(108, 171, 168, 0.1)';
+              e.currentTarget.style.outline = '2px dashed #6caba8';
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.currentTarget.style.backgroundColor = '';
+              e.currentTarget.style.outline = '';
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.currentTarget.style.backgroundColor = '';
+              e.currentTarget.style.outline = '';
+              
+              try {
+                // Check if this is a new component being added
+                const newComponentData = e.dataTransfer.getData('component');
+                if (newComponentData) {
+                  const componentData = JSON.parse(newComponentData);
+                  const newComponent: ComponentConfig = {
+                    id: `${componentData.id}-${Date.now()}`,
+                    type: componentData.type,
+                    props: { ...componentData.defaultProps },
+                    children: [], // All components can have children
+                  };
+                  
+                  // Add to the children of the current component
+                  const updatedComponents = findAndUpdateNestedComponent(components, component.id, (comp) => {
+                    return {
+                      ...comp,
+                      children: [...safeChildren(comp), newComponent]
+                    };
+                  });
+                  
+                  dispatch({ 
+                    type: 'REORDER_COMPONENTS', 
+                    payload: updatedComponents
+                  });
+                  
+                  setSnackbarMessage(`Added ${componentData.type} inside ${component.type}`);
+                  setSnackbarOpen(true);
+                  
+                  // Select the new component
+                  setTimeout(() => {
+                    dispatch({ type: 'SELECT_COMPONENT', payload: newComponent });
+                  }, 100);
+                }
+              } catch (err) {
+                console.error('Error handling drop inside component:', err);
+              }
+            }}
+          >
+            {/* Render children components recursively */}
+            {component.children && component.children.length > 0 ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {component.children.map((child, index) => (
+                  <Box 
+                    key={child.id}
+                    sx={{ position: 'relative' }}
+                  >
+                    {renderComponent(child)}
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <Box sx={{ 
+                padding: 1, 
+                textAlign: 'center', 
+                color: 'text.secondary',
+                border: '1px dashed #ccc',
+                borderRadius: 1,
+                display: component.type === 'Button' || component.type === 'Typography' || component.type === 'Image' ? 'none' : 'block',
+              }}>
+                <Typography variant="caption">
+                  Drop components here
+                </Typography>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      );
     };
     
-    const componentColor = getComponentColor(component.type);
-    
+    // Render the specific component type with the common wrapper
     switch (component.type) {
       case 'Section':
         return (
-          <Box {...commonProps}>
-            <Typography variant="caption" color="text.secondary" sx={{ 
-              position: 'absolute', 
-              top: 0, 
-              right: 0, 
-              fontSize: '10px', 
-              backgroundColor: 'rgba(255,255,255,0.8)', 
-              px: 0.5, 
-              zIndex: 2,
-              borderRadius: '0 0 0 4px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.5
-            }}>
-              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: componentColor }} />
-              Section
-            </Typography>
+          <ComponentWrapper>
             <Box
               sx={{
                 padding: component.props?.padding || 2,
@@ -511,286 +928,15 @@ export default function Playground() {
                 borderRadius: component.props?.borderRadius ? `${component.props.borderRadius}px` : 0,
                 border: component.props?.border || '1px solid #eee',
                 position: 'relative',
-                borderLeft: `3px solid ${componentColor}`
+                borderLeft: `3px solid ${getComponentColor(component.type)}`
               }}
-            >
-              {component.children?.map((child: ComponentConfig, childIndex) => (
-                <Box 
-                  key={child.id} 
-                  draggable
-                  onDragStart={(e) => {
-                    e.stopPropagation();
-                    e.dataTransfer.setData('nestedReorderComponent', JSON.stringify({
-                      id: child.id,
-                      parentId: component.id,
-                      index: childIndex
-                    }));
-                    e.currentTarget.style.opacity = '0.5';
-                  }}
-                  onDragEnd={(e) => {
-                    e.currentTarget.style.opacity = '1';
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const y = e.clientY - rect.top;
-                    const height = rect.height;
-                    
-                    // Clear previous styles
-                    e.currentTarget.style.borderTop = '';
-                    e.currentTarget.style.borderBottom = '';
-                    e.currentTarget.style.backgroundColor = '';
-                    
-                    if (y < height * 0.5) {
-                      e.currentTarget.style.borderTop = '2px dashed #6caba8';
-                    } else {
-                      e.currentTarget.style.borderBottom = '2px dashed #6caba8';
-                    }
-                  }}
-                  onDragLeave={(e) => {
-                    e.currentTarget.style.borderTop = '';
-                    e.currentTarget.style.borderBottom = '';
-                    e.currentTarget.style.backgroundColor = '';
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    
-                    // Clear styles
-                    e.currentTarget.style.borderTop = '';
-                    e.currentTarget.style.borderBottom = '';
-                    e.currentTarget.style.backgroundColor = '';
-                    
-                    try {
-                      // Check if this is a new component being added
-                      const newComponentData = e.dataTransfer.getData('component');
-                      if (newComponentData) {
-                        const componentData = JSON.parse(newComponentData);
-                        const newComponent: ComponentConfig = {
-                          id: `${componentData.id}-${Date.now()}`,
-                          type: componentData.type,
-                          props: { ...componentData.defaultProps },
-                          children: componentData.type === 'Section' || componentData.type === 'Card' ? [] : undefined,
-                        };
-                        
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const y = e.clientY - rect.top;
-                        const height = rect.height;
-                        
-                        // Find the parent component to update
-                        const updatedComponents = [...components];
-                        const parentIndex = updatedComponents.findIndex(c => c.id === component.id);
-                        
-                        if (parentIndex !== -1) {
-                          // Create a copy of the parent with modified children
-                          const updatedParent = { ...updatedComponents[parentIndex] };
-                          const updatedChildren = [...(updatedParent.children || [])];
-                          
-                          if (y < height * 0.5) {
-                            // Add before this child
-                            updatedChildren.splice(childIndex, 0, newComponent);
-                          } else {
-                            // Add after this child
-                            updatedChildren.splice(childIndex + 1, 0, newComponent);
-                          }
-                          
-                          updatedParent.children = updatedChildren;
-                          updatedComponents[parentIndex] = updatedParent;
-                          
-                          dispatch({ 
-                            type: 'REORDER_COMPONENTS', 
-                            payload: updatedComponents
-                          });
-                          
-                          setSnackbarMessage(`Added ${componentData.type} inside ${component.type}`);
-                          setSnackbarOpen(true);
-                          
-                          // Select the new component
-                          setTimeout(() => {
-                            dispatch({ type: 'SELECT_COMPONENT', payload: newComponent });
-                          }, 100);
-                        }
-                        return;
-                      }
-                      
-                      // Check if this is a nested component being reordered
-                      const nestedReorderData = e.dataTransfer.getData('nestedReorderComponent');
-                      if (nestedReorderData) {
-                        const { id, parentId, index: draggedIndex } = JSON.parse(nestedReorderData);
-                        if (draggedIndex === childIndex && parentId === component.id) return; // No change if dropping on itself
-                        
-                        // Find the parent component to update
-                        const updatedComponents = [...components];
-                        const parentIndex = updatedComponents.findIndex(c => c.id === component.id);
-                        
-                        if (parentIndex !== -1) {
-                          // Create a copy of the parent
-                          const updatedParent = { ...updatedComponents[parentIndex] };
-                          const updatedChildren = [...(updatedParent.children || [])];
-                          
-                          // If from the same parent, rearrange the children
-                          if (parentId === component.id) {
-                            const draggedChild = updatedChildren[draggedIndex];
-                            
-                            // Remove from old position
-                            updatedChildren.splice(draggedIndex, 1);
-                            
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            const y = e.clientY - rect.top;
-                            const height = rect.height;
-                            
-                            // Insert at new position
-                            if (y < height * 0.5) {
-                              // Insert before this component
-                              const insertPosition = draggedIndex < childIndex ? childIndex - 1 : childIndex;
-                              updatedChildren.splice(insertPosition, 0, draggedChild);
-                            } else {
-                              // Insert after this component
-                              const insertPosition = draggedIndex < childIndex ? childIndex : childIndex + 1;
-                              updatedChildren.splice(insertPosition, 0, draggedChild);
-                            }
-                            
-                            updatedParent.children = updatedChildren;
-                            updatedComponents[parentIndex] = updatedParent;
-                            
-                            dispatch({ 
-                              type: 'REORDER_COMPONENTS', 
-                              payload: updatedComponents
-                            });
-                            
-                            setSnackbarMessage(`Reordered component inside ${component.type}`);
-                            setSnackbarOpen(true);
-                          }
-                        }
-                      }
-                    } catch (err) {
-                      console.error('Error handling nested drop:', err);
-                    }
-                  }}
-                  onClick={(e: React.MouseEvent) => {
-                    e.stopPropagation();
-                    handleComponentSelect(child);
-                  }}
-                  sx={{ 
-                    position: 'relative',
-                    mb: childIndex < (component.children?.length || 0) - 1 ? 2 : 0,
-                    '&:hover': {
-                      outline: '1px dashed #6caba8',
-                      '& .delete-btn': {
-                        opacity: 1,
-                        transform: 'scale(1)'
-                      },
-                      '& .drag-handle': {
-                        opacity: 1,
-                        transform: 'scale(1)'
-                      }
-                    },
-                    ...(selectedComponent?.id === child.id && {
-                      outline: '2px solid #6caba8',
-                      boxShadow: '0 0 8px rgba(108, 171, 168, 0.3)'
-                    })
-                  }}
-                >
-                  {renderComponent(child)}
-                  <Box
-                    className="delete-btn"
-                    sx={{
-                      position: 'absolute',
-                      top: -8,
-                      right: -8,
-                      opacity: 0,
-                      transform: 'scale(0.8)',
-                      transition: 'all 0.2s ease',
-                      zIndex: 10
-                    }}
-                  >
-                    <Tooltip title={`Delete ${child.type}`}>
-                      <IconButton
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteComponent(child.id);
-                        }}
-                        sx={{
-                          backgroundColor: '#e66e73',
-                          color: 'white',
-                          width: 18,
-                          height: 18,
-                          '& .MuiSvgIcon-root': {
-                            fontSize: 12
-                          },
-                          boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
-                          '&:hover': {
-                            backgroundColor: '#d25a5e',
-                          }
-                        }}
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                  <Box
-                    className="drag-handle"
-                    sx={{
-                      position: 'absolute',
-                      top: -8,
-                      left: -8,
-                      opacity: 0,
-                      transform: 'scale(0.8)',
-                      transition: 'all 0.2s ease',
-                      zIndex: 10
-                    }}
-                  >
-                    <Tooltip title={`Drag to reorder`}>
-                      <IconButton
-                        size="small"
-                        sx={{
-                          backgroundColor: '#6caba8',
-                          color: 'white',
-                          width: 18,
-                          height: 18,
-                          '& .MuiSvgIcon-root': {
-                            fontSize: 12
-                          },
-                          boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
-                          cursor: 'grab',
-                          '&:hover': {
-                            backgroundColor: '#5a9996',
-                          }
-                        }}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-                          <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-                        </svg>
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                </Box>
-              ))}
-              {(!component.children || component.children.length === 0) && (
-                <Box sx={{ 
-                  padding: 2, 
-                  textAlign: 'center', 
-                  color: 'text.secondary',
-                  border: '1px dashed #ccc',
-                  borderRadius: 1,
-                  backgroundColor: 'rgba(255,255,255,0.5)',
-                  backdropFilter: 'blur(2px)'
-                }}>
-                  <Typography variant="caption">
-                    Drop components here
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          </Box>
+            />
+          </ComponentWrapper>
         );
         
       case 'Typography':
         return (
-          <Box {...commonProps}>
+          <ComponentWrapper>
             <Typography 
               variant={component.props?.variant || 'body1'}
               align={component.props?.align || 'left'}
@@ -798,47 +944,55 @@ export default function Playground() {
                 color: component.props?.color || '#153447',
                 fontSize: component.props?.fontSize ? `${component.props.fontSize}px` : 'inherit',
                 fontWeight: component.props?.fontWeight || 'normal',
-                padding: component.props?.padding || 0,
-                margin: component.props?.margin || 0,
-                backgroundColor: component.props?.backgroundColor || 'transparent',
-                borderRadius: component.props?.borderRadius ? `${component.props.borderRadius}px` : 0,
-                border: component.props?.border || 'none',
-                position: 'relative',
-                '&::before': {
+                fontStyle: component.props?.fontStyle || 'normal',
+                textDecoration: component.props?.textDecoration || 'none',
+                letterSpacing: component.props?.letterSpacing || 'normal',
+                lineHeight: component.props?.lineHeight || 'normal',
+                textTransform: component.props?.textTransform || 'none',
+                padding: 1,
+                '&::before': selectedComponent?.id === component.id ? {
                   content: '""',
                   position: 'absolute',
-                  left: -6,
                   top: 0,
-                  bottom: 0,
-                  width: 3,
-                  backgroundColor: componentColor,
-                  opacity: isSelected ? 1 : 0,
-                  transition: 'opacity 0.2s ease',
-                  borderRadius: '2px'
-                }
+                  left: 0,
+                  right: 0,
+                  height: '2px',
+                  backgroundColor: getComponentColor(component.type),
+                } : {},
               }}
             >
               {component.props?.children || 'Text Content'}
             </Typography>
-          </Box>
+            
+            {selectedComponent?.id === component.id && (
+              <Box sx={{ 
+                mt: 1, 
+                pt: 1, 
+                borderTop: '1px dashed #ccc',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 0.5,
+              }}>
+                {component.props?.fontWeight && component.props.fontWeight !== 'normal' && (
+                  <Chip size="small" label={`Weight: ${component.props.fontWeight}`} sx={{ fontSize: '10px' }} />
+                )}
+                {component.props?.fontStyle && component.props.fontStyle !== 'normal' && (
+                  <Chip size="small" label={`Style: ${component.props.fontStyle}`} sx={{ fontSize: '10px' }} />
+                )}
+                {component.props?.fontSize && (
+                  <Chip size="small" label={`Size: ${component.props.fontSize}px`} sx={{ fontSize: '10px' }} />
+                )}
+                {component.props?.textTransform && component.props.textTransform !== 'none' && (
+                  <Chip size="small" label={`Transform: ${component.props.textTransform}`} sx={{ fontSize: '10px' }} />
+                )}
+              </Box>
+            )}
+          </ComponentWrapper>
         );
       
       case 'Image':
         return (
-          <Box {...commonProps} sx={{ position: 'relative' }}>
-            {isSelected && (
-              <Box sx={{ 
-                position: 'absolute', 
-                top: -2, 
-                left: -2, 
-                right: -2, 
-                bottom: -2, 
-                border: `2px solid ${componentColor}`, 
-                borderRadius: '4px',
-                pointerEvents: 'none',
-                zIndex: 1
-              }} />
-            )}
+          <ComponentWrapper>
             <Avatar 
               src={component.props?.src || 'https://placehold.co/150'}
               alt={component.props?.alt}
@@ -851,19 +1005,19 @@ export default function Playground() {
                 boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
               }}
             />
-          </Box>
+          </ComponentWrapper>
         );
       
       case 'Card':
         return (
-          <Box {...commonProps}>
+          <ComponentWrapper>
             <Card 
               sx={{ 
                 maxWidth: component.props?.maxWidth || 345,
                 backgroundColor: component.props?.backgroundColor || '#fff',
                 borderRadius: `${component.props?.borderRadius || 4}px`,
                 boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
-                borderTop: `3px solid ${componentColor}`,
+                borderTop: `3px solid ${getComponentColor(component.type)}`,
                 position: 'relative'
               }}
               elevation={component.props?.elevation || 1}
@@ -879,287 +1033,17 @@ export default function Playground() {
                   alignItems: 'center',
                   gap: 0.5
                 }}>
-                  <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: componentColor }} />
+                  <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: getComponentColor(component.type) }} />
                   Card
                 </Typography>
-                {component.children?.map((child: ComponentConfig, childIndex) => (
-                  <Box 
-                    key={child.id} 
-                    draggable
-                    onDragStart={(e) => {
-                      e.stopPropagation();
-                      e.dataTransfer.setData('nestedReorderComponent', JSON.stringify({
-                        id: child.id,
-                        parentId: component.id,
-                        index: childIndex
-                      }));
-                      e.currentTarget.style.opacity = '0.5';
-                    }}
-                    onDragEnd={(e) => {
-                      e.currentTarget.style.opacity = '1';
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const y = e.clientY - rect.top;
-                      const height = rect.height;
-                      
-                      // Clear previous styles
-                      e.currentTarget.style.borderTop = '';
-                      e.currentTarget.style.borderBottom = '';
-                      e.currentTarget.style.backgroundColor = '';
-                      
-                      if (y < height * 0.5) {
-                        e.currentTarget.style.borderTop = '2px dashed #6caba8';
-                      } else {
-                        e.currentTarget.style.borderBottom = '2px dashed #6caba8';
-                      }
-                    }}
-                    onDragLeave={(e) => {
-                      e.currentTarget.style.borderTop = '';
-                      e.currentTarget.style.borderBottom = '';
-                      e.currentTarget.style.backgroundColor = '';
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      
-                      // Clear styles
-                      e.currentTarget.style.borderTop = '';
-                      e.currentTarget.style.borderBottom = '';
-                      e.currentTarget.style.backgroundColor = '';
-                      
-                      try {
-                        // Check if this is a new component being added
-                        const newComponentData = e.dataTransfer.getData('component');
-                        if (newComponentData) {
-                          const componentData = JSON.parse(newComponentData);
-                          const newComponent: ComponentConfig = {
-                            id: `${componentData.id}-${Date.now()}`,
-                            type: componentData.type,
-                            props: { ...componentData.defaultProps },
-                            children: componentData.type === 'Section' || componentData.type === 'Card' ? [] : undefined,
-                          };
-                          
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const y = e.clientY - rect.top;
-                          const height = rect.height;
-                          
-                          // Find the parent component to update
-                          const updatedComponents = [...components];
-                          const parentIndex = updatedComponents.findIndex(c => c.id === component.id);
-                          
-                          if (parentIndex !== -1) {
-                            // Create a copy of the parent with modified children
-                            const updatedParent = { ...updatedComponents[parentIndex] };
-                            const updatedChildren = [...(updatedParent.children || [])];
-                            
-                            if (y < height * 0.5) {
-                              // Add before this child
-                              updatedChildren.splice(childIndex, 0, newComponent);
-                            } else {
-                              // Add after this child
-                              updatedChildren.splice(childIndex + 1, 0, newComponent);
-                            }
-                            
-                            updatedParent.children = updatedChildren;
-                            updatedComponents[parentIndex] = updatedParent;
-                            
-                            dispatch({ 
-                              type: 'REORDER_COMPONENTS', 
-                              payload: updatedComponents
-                            });
-                            
-                            setSnackbarMessage(`Added ${componentData.type} inside ${component.type}`);
-                            setSnackbarOpen(true);
-                            
-                            // Select the new component
-                            setTimeout(() => {
-                              dispatch({ type: 'SELECT_COMPONENT', payload: newComponent });
-                            }, 100);
-                          }
-                          return;
-                        }
-                        
-                        // Check if this is a nested component being reordered
-                        const nestedReorderData = e.dataTransfer.getData('nestedReorderComponent');
-                        if (nestedReorderData) {
-                          const { id, parentId, index: draggedIndex } = JSON.parse(nestedReorderData);
-                          if (draggedIndex === childIndex && parentId === component.id) return; // No change if dropping on itself
-                          
-                          // Find the parent component to update
-                          const updatedComponents = [...components];
-                          const parentIndex = updatedComponents.findIndex(c => c.id === component.id);
-                          
-                          if (parentIndex !== -1) {
-                            // Create a copy of the parent
-                            const updatedParent = { ...updatedComponents[parentIndex] };
-                            const updatedChildren = [...(updatedParent.children || [])];
-                            
-                            // If from the same parent, rearrange the children
-                            if (parentId === component.id) {
-                              const draggedChild = updatedChildren[draggedIndex];
-                              
-                              // Remove from old position
-                              updatedChildren.splice(draggedIndex, 1);
-                              
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              const y = e.clientY - rect.top;
-                              const height = rect.height;
-                              
-                              // Insert at new position
-                              if (y < height * 0.5) {
-                                // Insert before this component
-                                const insertPosition = draggedIndex < childIndex ? childIndex - 1 : childIndex;
-                                updatedChildren.splice(insertPosition, 0, draggedChild);
-                              } else {
-                                // Insert after this component
-                                const insertPosition = draggedIndex < childIndex ? childIndex : childIndex + 1;
-                                updatedChildren.splice(insertPosition, 0, draggedChild);
-                              }
-                              
-                              updatedParent.children = updatedChildren;
-                              updatedComponents[parentIndex] = updatedParent;
-                              
-                              dispatch({ 
-                                type: 'REORDER_COMPONENTS', 
-                                payload: updatedComponents
-                              });
-                              
-                              setSnackbarMessage(`Reordered component inside ${component.type}`);
-                              setSnackbarOpen(true);
-                            }
-                          }
-                        }
-                      } catch (err) {
-                        console.error('Error handling nested drop:', err);
-                      }
-                    }}
-                    onClick={(e: React.MouseEvent) => {
-                      e.stopPropagation();
-                      handleComponentSelect(child);
-                    }}
-                    sx={{ 
-                      position: 'relative',
-                      mb: childIndex < (component.children?.length || 0) - 1 ? 2 : 0,
-                      '&:hover': {
-                        outline: '1px dashed #6caba8',
-                        '& .delete-btn': {
-                          opacity: 1,
-                          transform: 'scale(1)'
-                        },
-                        '& .drag-handle': {
-                          opacity: 1,
-                          transform: 'scale(1)'
-                        }
-                      },
-                      ...(selectedComponent?.id === child.id && {
-                        outline: '2px solid #6caba8',
-                        boxShadow: '0 0 8px rgba(108, 171, 168, 0.3)'
-                      })
-                    }}
-                  >
-                    {renderComponent(child)}
-                    <Box
-                      className="delete-btn"
-                      sx={{
-                        position: 'absolute',
-                        top: -8,
-                        right: -8,
-                        opacity: 0,
-                        transform: 'scale(0.8)',
-                        transition: 'all 0.2s ease',
-                        zIndex: 10
-                      }}
-                    >
-                      <Tooltip title={`Delete ${child.type}`}>
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteComponent(child.id);
-                          }}
-                          sx={{
-                            backgroundColor: '#e66e73',
-                            color: 'white',
-                            width: 18,
-                            height: 18,
-                            '& .MuiSvgIcon-root': {
-                              fontSize: 12
-                            },
-                            boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
-                            '&:hover': {
-                              backgroundColor: '#d25a5e',
-                            }
-                          }}
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                    <Box
-                      className="drag-handle"
-                      sx={{
-                        position: 'absolute',
-                        top: -8,
-                        left: -8,
-                        opacity: 0,
-                        transform: 'scale(0.8)',
-                        transition: 'all 0.2s ease',
-                        zIndex: 10
-                      }}
-                    >
-                      <Tooltip title={`Drag to reorder`}>
-                        <IconButton
-                          size="small"
-                          sx={{
-                            backgroundColor: '#6caba8',
-                            color: 'white',
-                            width: 18,
-                            height: 18,
-                            '& .MuiSvgIcon-root': {
-                              fontSize: 12
-                            },
-                            boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
-                            cursor: 'grab',
-                            '&:hover': {
-                              backgroundColor: '#5a9996',
-                            }
-                          }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
-                            <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-                          </svg>
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </Box>
-                ))}
-                {(!component.children || component.children.length === 0) && (
-                  <Box sx={{ 
-                    padding: 2, 
-                    textAlign: 'center', 
-                    color: 'text.secondary',
-                    border: '1px dashed #ccc',
-                    borderRadius: 1,
-                    mt: 1,
-                    backgroundColor: 'rgba(245, 245, 245, 0.5)'
-                  }}>
-                    <Typography variant="caption">
-                      Drop components here
-                    </Typography>
-                  </Box>
-                )}
               </CardContent>
             </Card>
-          </Box>
+          </ComponentWrapper>
         );
       
       case 'Button':
         return (
-          <Box {...commonProps}>
+          <ComponentWrapper>
             <Button 
               variant={component.props?.variant || 'contained'}
               color="primary"
@@ -1199,7 +1083,65 @@ export default function Playground() {
             >
               {component.props?.children || 'Button'}
             </Button>
-          </Box>
+          </ComponentWrapper>
+        );
+      
+      case 'Flexbox':
+        return (
+          <ComponentWrapper>
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: component.props?.flexDirection || 'row',
+                justifyContent: component.props?.justifyContent || 'flex-start',
+                alignItems: component.props?.alignItems || 'center',
+                flexWrap: component.props?.flexWrap || 'nowrap',
+                gap: component.props?.gap || 2,
+                padding: component.props?.padding || 2,
+                backgroundColor: component.props?.backgroundColor || 'transparent',
+                borderLeft: `3px solid ${getComponentColor(component.type)}`,
+                minHeight: 50,
+              }}
+            />
+          </ComponentWrapper>
+        );
+      
+      case 'Stack':
+        return (
+          <ComponentWrapper>
+            <Stack
+              direction={component.props?.direction || 'column'}
+              spacing={component.props?.spacing || 2}
+              alignItems={component.props?.alignItems || 'flex-start'}
+              justifyContent={component.props?.justifyContent || 'flex-start'}
+              sx={{
+                padding: component.props?.padding || 2,
+                backgroundColor: component.props?.backgroundColor || 'transparent',
+                borderLeft: `3px solid ${getComponentColor(component.type)}`,
+                minHeight: 50,
+                width: '100%',
+              }}
+            />
+          </ComponentWrapper>
+        );
+
+      case 'ScrollableContainer':
+        return (
+          <ComponentWrapper>
+            <Box
+              sx={{
+                height: component.props?.height || 200,
+                width: component.props?.width || '100%',
+                overflow: 'auto',
+                padding: component.props?.padding || 2,
+                backgroundColor: component.props?.backgroundColor || 'transparent',
+                borderRadius: component.props?.borderRadius || 1,
+                border: component.props?.border || '1px solid #e0e0e0',
+                borderLeft: `3px solid ${getComponentColor(component.type)}`,
+                position: 'relative',
+              }}
+            />
+          </ComponentWrapper>
         );
       
       default:
@@ -1211,36 +1153,224 @@ export default function Playground() {
     // Create a new ZIP file
     const zip = new JSZip();
     
-    // Create simplified code representation
-    // This uses a simplified approach since we can't access the private method
-    const componentCode = JSON.stringify(components, null, 2);
-    zip.file('component-data.json', componentCode);
+    // Use the enhanced exportPlayground function to generate all necessary files
+    const { techStack } = state;
+    const { 
+      code: componentCode, 
+      css: componentCss, 
+      fileSuffix,
+      packageJson,
+      readme,
+      appJs,
+      indexHtml
+    } = exportPlayground(components, techStack);
     
-    // Generate project files with a placeholder
-    // In a real implementation, we would need to make the method public or provide a public wrapper
+    // Create folder structure based on tech stack
+    switch(techStack) {
+      case 'react':
+      case 'react-typescript':
+        // Add component and related files
+        zip.file(`src/components/MyComponent${fileSuffix}`, componentCode);
+        zip.file('src/styles/app.css', componentCss);
+        
+        // Update App file with correct import path
+        const correctAppJs = appJs.replace(
+          "import MyComponent from './MyComponent';", 
+          "import MyComponent from './components/MyComponent';"
+        );
+        
+        zip.file(`src/App${fileSuffix}`, correctAppJs);
+        
+        // Add index file based on tech stack
+        const indexExtension = techStack === 'react-typescript' ? '.tsx' : '.jsx';
+        zip.file(`src/index${indexExtension}`, `import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './styles/app.css';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);`);
+
+        // Add package.json and README
+        zip.file('package.json', packageJson);
+        zip.file('README.md', readme);
+        zip.file('public/index.html', indexHtml);
+        
+        // Add tsconfig.json for TypeScript projects
+        if (techStack === 'react-typescript') {
+          zip.file('tsconfig.json', `{
+  "compilerOptions": {
+    "target": "es5",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "module": "esnext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"]
+}`);
+        }
+        break;
+        
+      case 'vue':
+        // Vue uses a different structure with single file components
+        zip.file('src/components/MyComponent.vue', componentCode);
+        zip.file('src/App.vue', `<template>
+  <div class="app">
+    <MyComponent />
+  </div>
+</template>
+
+<script>
+import MyComponent from './components/MyComponent.vue';
+
+export default {
+  name: 'App',
+  components: {
+    MyComponent
+  }
+};
+</script>
+
+<style>
+${componentCss}
+</style>`);
+        
+        // Add main.js and index.html
+        zip.file('src/main.js', `import { createApp } from 'vue';
+import App from './App.vue';
+
+createApp(App).mount('#app');`);
+        
+        zip.file('package.json', packageJson);
+        zip.file('README.md', readme);
+        zip.file('public/index.html', indexHtml);
+        break;
+        
+      case 'angular':
+        // Angular uses a module-based structure
+        const componentName = 'MyComponent';
+        const dashedName = 'my-component';
+        
+        // Component files
+        zip.file(`src/app/components/${dashedName}/${dashedName}.component.ts`, componentCode);
+        zip.file(`src/app/components/${dashedName}/${dashedName}.component.css`, componentCss);
+        
+        // Add app module
+        zip.file('src/app/app.module.ts', `import { NgModule } from '@angular/core';
+import { BrowserModule } from '@angular/platform-browser';
+import { HttpClientModule } from '@angular/common/http';
+
+import { AppComponent } from './app.component';
+import { ${componentName}Component } from './components/${dashedName}/${dashedName}.component';
+
+@NgModule({
+  declarations: [
+    AppComponent,
+    ${componentName}Component
+  ],
+  imports: [
+    BrowserModule,
+    HttpClientModule
+  ],
+  providers: [],
+  bootstrap: [AppComponent]
+})
+export class AppModule { }`);
+        
+        // Add app component
+        zip.file('src/app/app.component.ts', `import { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-root',
+  template: \`
+    <div class="app-container">
+      <app-${dashedName}></app-${dashedName}>
+    </div>
+  \`,
+  styles: [\`
+    .app-container {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+  \`]
+})
+export class AppComponent {
+  title = 'Generated App';
+}`);
+        
+        // Add main.ts
+        zip.file('src/main.ts', `import { platformBrowserDynamic } from '@angular/platform-browser-dynamic';
+import { AppModule } from './app/app.module';
+
+platformBrowserDynamic().bootstrapModule(AppModule)
+  .catch(err => console.error(err));
+`);
+        
+        zip.file('package.json', packageJson);
+        zip.file('README.md', readme);
+        zip.file('src/index.html', indexHtml);
+        break;
+    }
     
-    // Add a README file
-    zip.file('README.md', `# Generated Low-Code Project\n\nThis project was generated from the Low-Code Playground.\n\nComponent structure:\n\`\`\`json\n${componentCode}\n\`\`\``);
-    
-    // Generate and download ZIP
+    // Generate and download the ZIP file
     const blob = await zip.generateAsync({ type: 'blob' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'generated-app.zip';
+    link.download = `${techStack}-project.zip`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
     
-    // Show a success message
-    setSnackbarMessage('Project exported successfully');
+    // Show success message
+    setSnackbarMessage(`${techStack} code generated successfully!`);
     setSnackbarOpen(true);
   };
 
   // Helper to export component tree as JSON
   const exportComponentTree = () => {
-    const jsonString = JSON.stringify(components, null, 2);
+    // Extract API configurations
+    const apiConfigs = components
+      .filter(comp => comp.apiConfig?.enabled)
+      .map(comp => ({
+        id: comp.id,
+        url: comp.apiConfig?.url,
+        method: comp.apiConfig?.method,
+        headers: comp.apiConfig?.headers,
+        payload: comp.apiConfig?.payload,
+        dataPath: comp.props.dataPath || ''
+      }));
+    
+    // Create a more structured export
+    const exportData = {
+      version: '1.0',
+      metadata: {
+        exportedAt: new Date().toISOString(),
+        componentCount: components.length
+      },
+      techStack: state.techStack,
+      components,
+      apiConfigs: apiConfigs.length > 0 ? apiConfigs : undefined
+    };
+    
+    const jsonString = JSON.stringify(exportData, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -1253,6 +1383,57 @@ export default function Playground() {
 
     setSnackbarMessage('Component tree exported as JSON');
     setSnackbarOpen(true);
+  };
+
+  // Helper to import component tree from JSON
+  const importComponentTree = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const importedData = JSON.parse(event.target?.result as string);
+          
+          // Handle either the new structured format or the old format
+          const components = importedData.components || importedData;
+          const techStack = importedData.techStack || state.techStack;
+          
+          if (Array.isArray(components)) {
+            // Process components to ensure IDs are unique
+            const processedComponents = components.map(comp => ({
+              ...comp,
+              id: comp.id.includes(Date.now().toString()) 
+                ? comp.id 
+                : `${comp.id}-${Date.now()}`
+            }));
+            
+            dispatch({ 
+              type: 'IMPORT_PLAYGROUND_DATA', 
+              payload: {
+                components: processedComponents,
+                techStack
+              } 
+            });
+            
+            setSnackbarMessage('Component tree imported successfully');
+            setSnackbarOpen(true);
+          } else {
+            throw new Error('Invalid JSON format: components array not found');
+          }
+        } catch (error) {
+          console.error('Error importing JSON:', error);
+          setSnackbarMessage('Error importing JSON: Invalid format');
+          setSnackbarOpen(true);
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
   };
 
   // Get component configuration for the selected component
@@ -1309,16 +1490,72 @@ export default function Playground() {
     setSnackbarOpen(true);
   };
 
-  // Helper function to find a component by ID in the nested structure
+  // Helper function to fix the type error in recursive function calls
+  const findAndUpdateComponent = (comps: ComponentConfig[], targetId: string): boolean => {
+    for (let i = 0; i < comps.length; i++) {
+      if (comps[i].id === targetId) {
+        // Found the component
+        return true;
+      }
+      
+      // Try to find in children (with type safety)
+      const children = comps[i].children;
+      if (children && children.length > 0 && findAndUpdateComponent(children, targetId)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Update existing findComponentById to handle children safely
   const findComponentById = (components: ComponentConfig[], id: string): ComponentConfig | null => {
     for (const comp of components) {
       if (comp.id === id) return comp;
-      if (comp.children && comp.children.length > 0) {
-        const found = findComponentById(comp.children, id);
+      
+      const children = comp.children;
+      if (children && children.length > 0) {
+        const found = findComponentById(children, id);
         if (found) return found;
       }
     }
     return null;
+  };
+
+  // Update deleteComponentById to handle children safely
+  const deleteComponentById = (components: ComponentConfig[], id: string): ComponentConfig[] => {
+    return components.filter(comp => {
+      if (comp.id === id) return false;
+      
+      const children = comp.children;
+      if (children && children.length > 0) {
+        comp.children = deleteComponentById(children, id);
+      }
+      
+      return true;
+    });
+  };
+
+  // Update findAndUpdateNestedComponent to handle children safely
+  const findAndUpdateNestedComponent = (
+    components: ComponentConfig[],
+    targetId: string,
+    updateFn: (component: ComponentConfig) => ComponentConfig
+  ): ComponentConfig[] => {
+    return components.map(comp => {
+      if (comp.id === targetId) {
+        return updateFn(comp);
+      }
+      
+      const children = comp.children;
+      if (children && children.length > 0) {
+        return {
+          ...comp,
+          children: findAndUpdateNestedComponent(children, targetId, updateFn)
+        };
+      }
+      
+      return comp;
+    });
   };
 
   return (
@@ -1330,12 +1567,52 @@ export default function Playground() {
             <Typography variant="h6" sx={{ flexGrow: 1, color: '#fff' }}>
               Low-Code Playground
             </Typography>
+            
+            {/* Tech Stack Selector */}
+            <FormControl size="small" sx={{ minWidth: 150, mr: 2, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 1 }}>
+              <InputLabel id="tech-stack-select-label" sx={{ color: 'rgba(255,255,255,0.8)' }}>Tech Stack</InputLabel>
+              <Select
+                labelId="tech-stack-select-label"
+                id="tech-stack-select"
+                value={state.techStack}
+                label="Tech Stack"
+                onChange={(e) => dispatch({ type: 'SET_TECH_STACK', payload: e.target.value as TechStack })}
+                sx={{ 
+                  color: '#fff',
+                  '.MuiOutlinedInput-notchedOutline': {
+                    borderColor: 'rgba(255,255,255,0.2)',
+                  },
+                  '&:hover .MuiOutlinedInput-notchedOutline': {
+                    borderColor: 'rgba(255,255,255,0.3)',
+                  },
+                  '.MuiSvgIcon-root': {
+                    color: 'rgba(255,255,255,0.8)',
+                  }
+                }}
+                data-test-id="tech-stack-select"
+              >
+                <MenuItem value="react">React</MenuItem>
+                <MenuItem value="react-typescript">React (TypeScript)</MenuItem>
+                <MenuItem value="vue">Vue</MenuItem>
+                <MenuItem value="angular">Angular</MenuItem>
+              </Select>
+            </FormControl>
+            
             <Button
               variant="outlined"
               onClick={exportComponentTree}
+              startIcon={<FileDownloadIcon />}
               sx={{ mr: 1, color: '#fff', borderColor: 'rgba(255, 255, 255, 0.5)' }}
             >
               Export JSON
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={importComponentTree}
+              startIcon={<FileUploadIcon />}
+              sx={{ mr: 1, color: '#fff', borderColor: 'rgba(255, 255, 255, 0.5)' }}
+            >
+              Import JSON
             </Button>
             <Button
               variant="contained"
@@ -1343,7 +1620,7 @@ export default function Playground() {
               onClick={generateCode}
               sx={{ backgroundColor: '#e66e73', '&:hover': { backgroundColor: '#d25a5e' } }}
             >
-              Generate Project
+              Generate {state.techStack.charAt(0).toUpperCase() + state.techStack.slice(1)} Project
             </Button>
           </Toolbar>
         </AppBar>
@@ -1351,581 +1628,23 @@ export default function Playground() {
         {/* Main Content */}
         <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden', width: '100%', backgroundColor: '#f0f3f5' }}>
           {/* Components Panel - 20% Width */}
-          <Paper 
-            sx={{ 
-              width: '20%',
-              minWidth: '200px',
-              flexShrink: 0,
-              borderRight: '1px solid rgba(0, 0, 0, 0.12)',
-              overflow: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              backgroundColor: '#fff'
-            }}
-          >
-            <Typography variant="h6" sx={{ p: 2, borderBottom: '1px solid rgba(0, 0, 0, 0.12)', backgroundColor: '#153447', color: '#fff' }}>
-              Components
-            </Typography>
-            <Box sx={{ p: 2, flex: 1, overflow: 'auto' }}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {availableComponents.map((component, index) => (
-                  <Card
-                    key={component.id}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData('component', JSON.stringify({
-                        type: component.type,
-                        id: component.id,
-                        defaultProps: component.defaultProps
-                      }));
-                      document.body.style.cursor = 'grabbing';
-                    }}
-                    onDragEnd={() => {
-                      document.body.style.cursor = 'default';
-                    }}
-                    onClick={() => dispatch({ type: 'SELECT_AVAILABLE_COMPONENT', payload: component.id })}
-                    sx={{ 
-                      cursor: 'grab',
-                      transition: 'all 0.2s ease',
-                      '&:hover': {
-                        transform: 'translateY(-2px)',
-                        boxShadow: '0 4px 8px rgba(0,0,0,0.1)'
-                      },
-                      ...(selectedAvailableComponent === component.id && {
-                        backgroundColor: 'rgba(21, 52, 71, 0.08)',
-                        border: '2px solid #153447',
-                      })
-                    }}
-                  >
-                    <CardContent sx={{ py: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                      {component.type === 'Section' && <Box sx={{ width: 16, height: 16, bgcolor: '#6caba8', borderRadius: '50%' }} />}
-                      {component.type === 'Typography' && <Box sx={{ width: 16, height: 16, bgcolor: '#e66e73', borderRadius: '50%' }} />}
-                      {component.type === 'Button' && <Box sx={{ width: 16, height: 16, bgcolor: '#6d597a', borderRadius: '50%' }} />}
-                      {component.type === 'Card' && <Box sx={{ width: 16, height: 16, bgcolor: '#b7bf96', borderRadius: '50%' }} />}
-                      {component.type === 'Image' && <Box sx={{ width: 16, height: 16, bgcolor: '#e6a456', borderRadius: '50%' }} />}
-                      <Box>
-                        <Typography fontWeight="medium">{component.type}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Drag to add
-                        </Typography>
-                      </Box>
-                    </CardContent>
-                  </Card>
-                ))}
-              </Box>
-            </Box>
-          </Paper>
+          <Box sx={{ width: '20%', minWidth: '200px', flexShrink: 0 }}>
+            <ComponentsPanel searchText={searchText} />
+          </Box>
 
           {/* Playground Area - 60% Width */}
-          <Paper 
-            sx={{ 
-              width: '60%',
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              backgroundColor: '#f0f3f5',
-              minWidth: 0
-            }}
-          >
-            <Typography variant="h6" sx={{ p: 2, borderBottom: '1px solid rgba(0, 0, 0, 0.12)', backgroundColor: '#153447', color: '#fff' }}>
-              Playground - Drag & Drop Components Here
-            </Typography>
-            <Box sx={{ flex: 1, p: 2, overflow: 'auto' }}>
-              <Box
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const y = e.clientY - rect.top;
-                  if (components.length === 0 || y < rect.height * 0.2) {
-                    e.currentTarget.style.borderTop = '2px dashed #6caba8';
-                    e.currentTarget.style.borderBottom = '';
-                  } else {
-                    e.currentTarget.style.borderBottom = '2px dashed #6caba8';
-                    e.currentTarget.style.borderTop = '';
-                  }
-                }}
-                onDragLeave={(e) => {
-                  e.currentTarget.style.borderTop = '';
-                  e.currentTarget.style.borderBottom = '';
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.currentTarget.style.borderTop = '';
-                  e.currentTarget.style.borderBottom = '';
-                  
-                  try {
-                    const data = e.dataTransfer.getData('component');
-                    if (data) {
-                      const componentData = JSON.parse(data);
-                      const newComponent: ComponentConfig = {
-                        id: `${componentData.id}-${Date.now()}`,
-                        type: componentData.type,
-                        props: { ...componentData.defaultProps },
-                        children: componentData.type === 'Section' || componentData.type === 'Card' ? [] : undefined,
-                      };
-                      
-                      // Add to beginning or end based on drop position
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const y = e.clientY - rect.top;
-                      
-                      if (components.length === 0 || y < rect.height * 0.5) {
-                        // Add to beginning
-                        dispatch({ 
-                          type: 'REORDER_COMPONENTS', 
-                          payload: [newComponent, ...components] 
-                        });
-                      } else {
-                        // Add to end
-                        dispatch({ 
-                          type: 'REORDER_COMPONENTS', 
-                          payload: [...components, newComponent] 
-                        });
-                      }
-                      
-                      // Select the new component
-                      setTimeout(() => {
-                        dispatch({ type: 'SELECT_COMPONENT', payload: newComponent });
-                      }, 100);
-                      
-                      setSnackbarMessage(`Added ${componentData.type} component`);
-                      setSnackbarOpen(true);
-                    }
-                  } catch (err) {
-                    console.error('Error adding component:', err);
-                  }
-                }}
-                sx={{
-                  minHeight: '100%',
-                  border: '2px dashed #ccc',
-                  borderRadius: 1,
-                  p: 2,
-                  backgroundColor: '#fff',
-                  backgroundImage: components.length === 0 ? 'radial-gradient(#6caba8 8px, transparent 8px), radial-gradient(#e66e73 8px, transparent 8px), radial-gradient(#6d597a 8px, transparent 8px), radial-gradient(#b7bf96 8px, transparent 8px), radial-gradient(#e6a456 8px, transparent 8px)' : 'none',
-                  backgroundSize: components.length === 0 ? '100px 100px' : '0',
-                  backgroundPosition: components.length === 0 ? '0 0, 30px 30px, 60px 15px, 15px 45px, 45px 70px' : '0 0',
-                  backgroundRepeat: 'repeat',
-                  backgroundBlendMode: 'screen',
-                  position: 'relative',
-                  transition: 'all 0.3s ease',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
-                }}
-              >
-                {components.length === 0 && (
-                  <Box 
-                    sx={{ 
-                      height: '100%', 
-                      display: 'flex', 
-                      flexDirection: 'column',
-                      justifyContent: 'center', 
-                      alignItems: 'center',
-                      color: '#153447',
-                      padding: 4,
-                      backgroundColor: 'rgba(255, 255, 255, 0.85)',
-                      borderRadius: 2,
-                      backdropFilter: 'blur(5px)'
-                    }}
-                  >
-                    <Typography variant="h6" align="center" fontWeight="bold" sx={{ color: '#153447' }}>
-                      Start Building
-                    </Typography>
-                    <Typography variant="body1" align="center" sx={{ mt: 1 }}>
-                      Drag components from the left panel and drop them here
-                    </Typography>
-                    <Typography variant="body2" align="center" sx={{ mt: 1, color: 'text.secondary' }}>
-                      You can drop components before, after, or inside other components
-                    </Typography>
-                  </Box>
-                )}
-                
-                {components.map((component, index) => (
-                  <Box
-                    key={component.id}
-                    draggable
-                    onDragStart={(e) => {
-                      e.stopPropagation();
-                      e.dataTransfer.setData('reorderComponent', JSON.stringify({
-                        id: component.id,
-                        index: index
-                      }));
-                      e.currentTarget.style.opacity = '0.5';
-                    }}
-                    onDragEnd={(e) => {
-                      e.currentTarget.style.opacity = '1';
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleComponentSelect(component);
-                      console.log('Selected component:', component);
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const y = e.clientY - rect.top;
-                      const height = rect.height;
-                      
-                      // Clear previous styles
-                      e.currentTarget.style.borderTop = '';
-                      e.currentTarget.style.borderBottom = '';
-                      e.currentTarget.style.backgroundColor = '';
-                      
-                      if (y < height * 0.3) {
-                        e.currentTarget.style.borderTop = '2px dashed #6caba8';
-                      } else if (y > height * 0.7) {
-                        e.currentTarget.style.borderBottom = '2px dashed #6caba8';
-                      } else if (component.type === 'Section' || component.type === 'Card') {
-                        e.currentTarget.style.backgroundColor = 'rgba(108, 171, 168, 0.1)';
-                      }
-                    }}
-                    onDragLeave={(e) => {
-                      e.currentTarget.style.borderTop = '';
-                      e.currentTarget.style.borderBottom = '';
-                      e.currentTarget.style.backgroundColor = '';
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      
-                      // Clear styles
-                      e.currentTarget.style.borderTop = '';
-                      e.currentTarget.style.borderBottom = '';
-                      e.currentTarget.style.backgroundColor = '';
-                      
-                      try {
-                        // Check if this is a new component being added
-                        const newComponentData = e.dataTransfer.getData('component');
-                        if (newComponentData) {
-                          const componentData = JSON.parse(newComponentData);
-                          const newComponent: ComponentConfig = {
-                            id: `${componentData.id}-${Date.now()}`,
-                            type: componentData.type,
-                            props: { ...componentData.defaultProps },
-                            children: componentData.type === 'Section' || componentData.type === 'Card' ? [] : undefined,
-                          };
-                          
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const y = e.clientY - rect.top;
-                          const height = rect.height;
-                          
-                          // Determine where to add the component
-                          if (y < height * 0.3) {
-                            // Add before this component
-                            const newComponents = [...components];
-                            newComponents.splice(index, 0, newComponent);
-                            dispatch({ 
-                              type: 'REORDER_COMPONENTS', 
-                              payload: newComponents
-                            });
-                            setSnackbarMessage(`Added ${componentData.type} before ${component.type}`);
-                          } else if (y > height * 0.7) {
-                            // Add after this component
-                            const newComponents = [...components];
-                            newComponents.splice(index + 1, 0, newComponent);
-                            dispatch({ 
-                              type: 'REORDER_COMPONENTS', 
-                              payload: newComponents
-                            });
-                            setSnackbarMessage(`Added ${componentData.type} after ${component.type}`);
-                          } else if (component.type === 'Section' || component.type === 'Card') {
-                            // Add inside this component
-                            const updatedComponent = {
-                              ...component,
-                              children: [...(component.children || []), newComponent]
-                            };
-                            
-                            const newComponents = [...components];
-                            newComponents[index] = updatedComponent;
-                            
-                            dispatch({ 
-                              type: 'REORDER_COMPONENTS', 
-                              payload: newComponents
-                            });
-                            setSnackbarMessage(`Added ${componentData.type} inside ${component.type}`);
-                          }
-                          
-                          // Select the new component
-                          setTimeout(() => {
-                            dispatch({ type: 'SELECT_COMPONENT', payload: newComponent });
-                          }, 100);
-                          
-                          setSnackbarOpen(true);
-                          return;
-                        }
-                        
-                        // Check if this is a component being reordered
-                        const reorderData = e.dataTransfer.getData('reorderComponent');
-                        if (reorderData) {
-                          const { id, index: draggedIndex } = JSON.parse(reorderData);
-                          if (draggedIndex === index) return; // No change if dropping on itself
-                          
-                          const draggedComponent = components[draggedIndex];
-                          const newComponents = [...components];
-                          
-                          // Remove the dragged component
-                          newComponents.splice(draggedIndex, 1);
-                          
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const y = e.clientY - rect.top;
-                          const height = rect.height;
-                          
-                          if (y < height * 0.3) {
-                            // Insert before this component
-                            const targetIndex = draggedIndex < index ? index - 1 : index;
-                            newComponents.splice(targetIndex, 0, draggedComponent);
-                            setSnackbarMessage(`Moved ${draggedComponent.type} before ${component.type}`);
-                          } else if (y > height * 0.7) {
-                            // Insert after this component
-                            const targetIndex = draggedIndex < index ? index : index + 1;
-                            newComponents.splice(targetIndex, 0, draggedComponent);
-                            setSnackbarMessage(`Moved ${draggedComponent.type} after ${component.type}`);
-                          } else if (component.type === 'Section' || component.type === 'Card') {
-                            // Move into this component
-                            const updatedComponent = {
-                              ...component,
-                              children: [...(component.children || []), draggedComponent]
-                            };
-                            
-                            // Remove the dragged component and update the target
-                            newComponents[index] = updatedComponent;
-                            setSnackbarMessage(`Moved ${draggedComponent.type} inside ${component.type}`);
-                          } else {
-                            // Default to after if not a container
-                            const targetIndex = draggedIndex < index ? index : index + 1;
-                            newComponents.splice(targetIndex, 0, draggedComponent);
-                          }
-                          
-                          dispatch({ 
-                            type: 'REORDER_COMPONENTS', 
-                            payload: newComponents
-                          });
-                          setSnackbarOpen(true);
-                        }
-                      } catch (err) {
-                        console.error('Error handling drop:', err);
-                      }
-                    }}
-                    sx={{ 
-                      mb: 2,
-                      position: 'relative',
-                      borderRadius: 1,
-                      overflow: 'visible',
-                      '&:hover': {
-                        outline: '2px solid #6caba8',
-                        '& .delete-btn': {
-                          opacity: 1,
-                          transform: 'translateX(0)',
-                        },
-                        '& .drag-handle': {
-                          opacity: 1,
-                          transform: 'translateX(0)',
-                        }
-                      },
-                      ...(selectedComponent?.id === component.id && {
-                        outline: '2px solid #6caba8',
-                        boxShadow: '0 0 12px rgba(108, 171, 168, 0.3)'
-                      })
-                    }}
-                  >
-                    {renderComponent(component)}
-                    <Box 
-                      className="delete-btn"
-                      sx={{
-                        position: 'absolute',
-                        top: -10,
-                        right: -10,
-                        zIndex: 10,
-                        opacity: 0.1,
-                        transform: 'translateX(10px)',
-                        transition: 'all 0.2s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5
-                      }}
-                    >
-                      <Tooltip title={`Delete ${component.type}`}>
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteComponent(component.id);
-                          }}
-                          sx={{
-                            backgroundColor: '#e66e73',
-                            color: 'white',
-                            boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
-                            '&:hover': {
-                              backgroundColor: '#d25a5e',
-                            }
-                          }}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                    <Box 
-                      className="drag-handle"
-                      sx={{
-                        position: 'absolute',
-                        top: -10,
-                        left: -10,
-                        zIndex: 10,
-                        opacity: 0.1,
-                        transform: 'translateX(-10px)',
-                        transition: 'all 0.2s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5
-                      }}
-                    >
-                      <Tooltip title={`Drag to reorder`}>
-                        <IconButton
-                          size="small"
-                          sx={{
-                            backgroundColor: '#6caba8',
-                            color: 'white',
-                            boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
-                            cursor: 'grab',
-                            '&:hover': {
-                              backgroundColor: '#5a9996',
-                            }
-                          }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                            <path d="M4 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-                          </svg>
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </Box>
-                ))}
-              </Box>
-            </Box>
-          </Paper>
+          <Box sx={{ width: '60%', flex: 1, minWidth: 0 }}>
+            <PlaygroundArea />
+          </Box>
 
           {/* Properties Panel - 20% Width */}
-          <Paper 
-            sx={{ 
-              width: '20%',
-              minWidth: '200px',
-              flexShrink: 0,
-              borderLeft: '1px solid rgba(0, 0, 0, 0.12)',
-              overflow: 'auto',
-              display: 'flex',
-              flexDirection: 'column',
-              backgroundColor: '#fff'
-            }}
-          >
-            <Typography variant="h6" sx={{ p: 2, borderBottom: '1px solid rgba(0, 0, 0, 0.12)', backgroundColor: '#153447', color: '#fff' }}>
-              Properties
-            </Typography>
-            <Box sx={{ p: 2, flex: 1, overflow: 'auto' }}>
-              {selectedComponent ? (
-                <Box>
-                  <Box 
-                    sx={{ 
-                      display: 'flex', 
-                      alignItems: 'center',
-                      backgroundColor: 'rgba(108, 171, 168, 0.1)',
-                      p: 1,
-                      borderRadius: 1,
-                      mb: 2,
-                      borderLeft: '4px solid #6caba8'
-                    }}
-                  >
-                    <Typography variant="subtitle1" fontWeight="bold" sx={{ flexGrow: 1, color: '#153447' }}>
-                      {selectedComponent.type} Properties
-                    </Typography>
-                    <Tooltip title="Component ID">
-                      <Typography variant="caption" color="text.secondary">
-                        {selectedComponent.id}
-                      </Typography>
-                    </Tooltip>
-                  </Box>
-                  
-                  <Divider sx={{ mb: 2 }} />
-                  
-                  {Object.entries(selectedComponent.props || {}).map(([key, value]) => {
-                    if (key === 'children' && typeof value !== 'string') return null;
-                    
-                    const componentConfig = getComponentConfig(selectedComponent.type);
-                    const propConfig = componentConfig?.configurableProps[key];
-                    
-                    if (propConfig) {
-                      return (
-                        <Box key={key} sx={{ mt: 1, mb: 2 }}>
-                          {renderPropertyField(key, propConfig, value, (newValue) => {
-                            dispatch({
-                              type: 'UPDATE_COMPONENT',
-                              payload: {
-                                id: selectedComponent.id,
-                                props: { [key]: newValue },
-                              },
-                            });
-                          })}
-                        </Box>
-                      );
-                    }
-                    return null;
-                  })}
-                </Box>
-              ) : selectedAvailableComponent ? (
-                <Box>
-                  <Box 
-                    sx={{ 
-                      backgroundColor: 'rgba(108, 171, 168, 0.1)',
-                      p: 1,
-                      borderRadius: 1,
-                      mb: 2,
-                      borderLeft: '4px solid #6caba8'
-                    }}
-                  >
-                    <Typography variant="subtitle1" fontWeight="bold" sx={{ color: '#153447' }}>
-                      Component Preview
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Properties will be editable after adding to playground
-                    </Typography>
-                  </Box>
-                  
-                  <Divider sx={{ mb: 2 }} />
-                  
-                  {Object.entries(
-                    availableComponents.find(c => c.id === selectedAvailableComponent)?.configurableProps || {}
-                  ).map(([key, prop]) => (
-                    <Box key={key} sx={{ mt: 1, mb: 2 }}>
-                      {renderPropertyField(key, prop, prop.default, () => {})}
-                    </Box>
-                  ))}
-                </Box>
-              ) : (
-                <Box 
-                  sx={{ 
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    color: 'text.secondary',
-                    p: 2
-                  }}
-                >
-                  <Typography align="center">
-                    Select a component to edit its properties
-                  </Typography>
-                  <Typography variant="caption" align="center" sx={{ mt: 1 }}>
-                    Changes made here will be reflected in real-time
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-          </Paper>
+          <Box sx={{ width: '20%', minWidth: '200px', flexShrink: 0 }}>
+            <PropertiesPanel />
+          </Box>
         </Box>
       </Box>
       
+      {/* Notifications */}
       <Snackbar 
         open={snackbarOpen} 
         autoHideDuration={2000} 

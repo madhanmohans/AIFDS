@@ -117,36 +117,6 @@ export default function Dashboard() {
           </Box>
         </Box>
       </Paper>
-
-      <Box sx={{ display: 'flex', justifyContent: 'center', gap: 4, mt: 4 }}>
-        <Card sx={{ flex: '1 1 300px', maxWidth: 400 }}>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Recent Projects
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Access your previously created projects
-            </Typography>
-          </CardContent>
-          <CardActions>
-            <Button size="small">View All Projects</Button>
-          </CardActions>
-        </Card>
-
-        <Card sx={{ flex: '1 1 300px', maxWidth: 400 }}>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Templates
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Start with pre-built application templates
-            </Typography>
-          </CardContent>
-          <CardActions>
-            <Button size="small">Browse Templates</Button>
-          </CardActions>
-        </Card>
-      </Box>
     </Container>
   );
 } 

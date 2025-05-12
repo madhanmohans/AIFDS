@@ -29,4 +29,7 @@ export interface PlaygroundComponent {
   type: string;
   props: Record<string, any>;
   children?: PlaygroundComponent[];
-} 
+}
+
+// Re-export all types from playground.ts
+export * from './playground'; 
